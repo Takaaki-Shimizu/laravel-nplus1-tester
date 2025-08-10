@@ -8,7 +8,7 @@ use App\Models\User;
 use Illuminate\Database\Seeder;
 use Faker\Factory as Faker;
 
-class ArticleSeeder extends Seeder
+class ArticleBatchSeeder extends Seeder
 {
     /**
      * Run the database seeds.
@@ -29,20 +29,26 @@ class ArticleSeeder extends Seeder
             $userIds = [$userId];
         }
         
-        // 100,000社 x 3記事 = 300,000記事を効率的に作成
-        $batchSize = 100; // バッチサイズを削減してメモリ使用量を抑制
-        $totalCompanies = 100000;
+        // 直近に作成された10,000社のIDを取得
+        $companyIds = Company::orderBy('id', 'desc')->limit(10000)->pluck('id')->toArray();
+        
+        if (empty($companyIds)) {
+            echo "会社データが存在しません。先にCompanyBatchSeederを実行してください。\n";
+            return;
+        }
+        
+        // 各社に3記事ずつ作成
+        $batchSize = 1000;
         $articlesPerCompany = 3;
         
-        for ($companyId = 1; $companyId <= $totalCompanies; $companyId += $batchSize) {
+        for ($i = 0; $i < count($companyIds); $i += $batchSize) {
             $articles = [];
+            $batchCompanyIds = array_slice($companyIds, $i, $batchSize);
             
-            for ($i = 0; $i < $batchSize && ($companyId + $i) <= $totalCompanies; $i++) {
-                $currentCompanyId = $companyId + $i;
-                
+            foreach ($batchCompanyIds as $companyId) {
                 for ($j = 1; $j <= $articlesPerCompany; $j++) {
                     $articles[] = [
-                        'company_id' => $currentCompanyId,
+                        'company_id' => $companyId,
                         'user_id' => $faker->randomElement($userIds),
                         'title' => $faker->realText(30),
                         'content' => $faker->realText(500),
@@ -55,9 +61,13 @@ class ArticleSeeder extends Seeder
             }
             
             Article::insert($articles);
-            unset($articles); // メモリ解放
-            gc_collect_cycles(); // ガベージコレクション実行
-            echo "Article batch completed for companies " . $companyId . " to " . min($companyId + $batchSize - 1, $totalCompanies) . " (" . ($companyId + $batchSize - 1) * 3 . " articles)\n";
+            echo "Article batch completed for " . count($batchCompanyIds) . " companies (" . count($articles) . " articles)\n";
+            
+            // メモリクリア
+            unset($articles);
         }
+        
+        // ガベージコレクション実行でメモリクリア
+        gc_collect_cycles();
     }
 }

@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\Company;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Response;
+use Illuminate\Support\Facades\Log;
 
 class CompanyController extends Controller
 {
@@ -12,11 +13,12 @@ class CompanyController extends Controller
     {
         $this->middleware('auth');
     }
-    
+
     public function index(Request $request)
     {
+        set_time_limit(0);
         $query = Company::query();
-        
+
         // 検索機能
         if ($request->has('search')) {
             $searchTerm = $request->input('search');
@@ -25,13 +27,30 @@ class CompanyController extends Controller
                   ->orWhere('address', 'like', "%{$searchTerm}%");
         }
 
-        // CSVダウンロード
+        // CSVダウンロード（最大10,000件制限）
         if ($request->has('csv')) {
-            return $this->exportCsv($query->get());
+            $startTime = microtime(true);
+            $startMemory = memory_get_usage(true);
+            $companies = $query->limit(10000)->with('articles.likes')->get();
+            $response = $this->exportCsv($companies);
+            $endTime = microtime(true);
+            $endMemory = memory_get_usage(true);
+            $peakMemory = memory_get_peak_usage(true);
+            $executionTime = $endTime - $startTime;
+            $memoryUsed = $endMemory - $startMemory;
+            Log::info("CSV export completed", [
+                'execution_time' => round($executionTime, 3) . '秒',
+                'company_count' => $companies->count(),
+                'memory_used' => $this->formatBytes($memoryUsed),
+                'peak_memory' => $this->formatBytes($peakMemory),
+                'start_memory' => $this->formatBytes($startMemory),
+                'end_memory' => $this->formatBytes($endMemory)
+            ]);
+            return $response;
         }
-        
+
         $companies = $query->paginate(10);
-        
+
         return view('companies.index', compact('companies'));
     }
 
@@ -50,9 +69,9 @@ class CompanyController extends Controller
             'email' => 'nullable|email|max:255',
             'website' => 'nullable|url|max:255',
         ]);
-        
+
         Company::create($validated);
-        
+
         return redirect()->route('companies.index')
                          ->with('success', '会社情報が登録されました。');
     }
@@ -77,9 +96,9 @@ class CompanyController extends Controller
             'email' => 'nullable|email|max:255',
             'website' => 'nullable|url|max:255',
         ]);
-        
+
         $company->update($validated);
-        
+
         return redirect()->route('companies.index')
                          ->with('success', '会社情報が更新されました。');
     }
@@ -87,11 +106,11 @@ class CompanyController extends Controller
     public function destroy(Company $company)
     {
         $company->delete();
-        
+
         return redirect()->route('companies.index')
                          ->with('success', '会社情報が削除されました。');
     }
-    
+
     // CSVエクスポート機能
     protected function exportCsv($companies)
     {
@@ -103,30 +122,25 @@ class CompanyController extends Controller
             'Expires' => '0',
         ];
 
-        // 事前に企業ごとの人気記事をまとめて取得（Eager Loading）
-        // $companies = $companies->load(['articles' => function ($query) {
-        //     $query->withCount('likes')
-        //         ->orderBy('likes_count', 'desc')
-        //         ->take(3);
-        // }]);
-        
+        // 事前ロードは呼び出し元で既に実行済み
+
         $callback = function() use ($companies) {
             $file = fopen('php://output', 'w');
-            
+
             // ヘッダー行
             fputcsv($file, [
                 'ID', '会社名', '説明', '住所', '電話番号', 'メールアドレス', 'ウェブサイト',
                 '人気記事1', 'いいね数1', '人気記事2', 'いいね数2', '人気記事3', 'いいね数3'
             ]);
-            
+
             // データ行
             foreach ($companies as $company) {
                 // 会社に紐づく記事を取得し、いいね数でソートして上位3件を取得
-                $topArticles = \App\Models\Article::where('company_id', $company->id)
-                ->withCount('likes')
-                ->orderBy('likes_count', 'desc')
-                ->take(3)
-                ->get();
+                // $topArticles = \App\Models\Article::where('company_id', $company->id)
+                // ->withCount('likes')
+                // ->orderBy('likes_count', 'desc')
+                // ->take(3)
+                // ->get();
 
                 $row = [
                     $company->id,
@@ -138,9 +152,12 @@ class CompanyController extends Controller
                     $company->website,
                 ];
 
-                // 事前ロードしたデータを利用（SQLが発行されない）
-                // $topArticles = $company->articles;
-                
+                // 手動でlike数を計算してソート（連続インデックス）
+                $topArticles = $company->articles->map(function ($article) {
+                    $article->likes_count = $article->likes->count();
+                    return $article;
+                })->sortByDesc('likes_count')->take(3)->values();
+
                 // 上位3記事とそのいいね数を追加
                 for ($i = 0; $i < 3; $i++) {
                     if (isset($topArticles[$i])) {
@@ -152,13 +169,27 @@ class CompanyController extends Controller
                         $row[] = '';
                     }
                 }
-                
+
                 fputcsv($file, $row);
             }
-            
+
             fclose($file);
         };
-        
+
         return Response::stream($callback, 200, $headers);
+    }
+
+    /**
+     * バイトサイズを読みやすい形式に変換
+     */
+    private function formatBytes($bytes, $precision = 2)
+    {
+        $units = ['B', 'KB', 'MB', 'GB', 'TB'];
+        
+        for ($i = 0; $bytes >= 1024 && $i < count($units) - 1; $i++) {
+            $bytes /= 1024;
+        }
+        
+        return round($bytes, $precision) . ' ' . $units[$i];
     }
 }

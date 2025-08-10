@@ -6,7 +6,7 @@ use App\Models\Company;
 use Illuminate\Database\Seeder;
 use Faker\Factory as Faker;
 
-class CompanySeeder extends Seeder
+class CompanyBatchSeeder extends Seeder
 {
     /**
      * Run the database seeds.
@@ -15,9 +15,9 @@ class CompanySeeder extends Seeder
     {
         $faker = Faker::create('ja_JP');
         
-        // 100,000件の会社データを効率的に生成（バッチ挿入）
+        // 10,000件の会社データを効率的に生成（バッチ挿入）
         $batchSize = 500;
-        $totalRecords = 100000;
+        $totalRecords = 10000;
         
         for ($batch = 0; $batch < $totalRecords / $batchSize; $batch++) {
             $companies = [];
@@ -36,7 +36,10 @@ class CompanySeeder extends Seeder
             }
             
             Company::insert($companies);
-            echo "Batch " . ($batch + 1) . " completed (" . (($batch + 1) * $batchSize) . "/" . $totalRecords . ")\n";
+            echo "Company batch " . ($batch + 1) . " completed (" . (($batch + 1) * $batchSize) . "/" . $totalRecords . ")\n";
         }
+        
+        // ガベージコレクション実行でメモリクリア
+        gc_collect_cycles();
     }
 }
